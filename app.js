@@ -9,17 +9,24 @@ const ICONS = {
   inicio: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z"/></svg>`,
   clientes: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M4 19c.6-3 2.6-5 5-5s4.4 2 5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M16.2 14.2c2.2.3 3.8 2.1 4.3 4.8"/></svg>`,
   pagos: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h3"/></svg>`,
+  gastos: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 4h10a1 1 0 0 1 1 1v16l-3.2-1.4L12 21l-2.8-1.4L6 21V5a1 1 0 0 1 1-1z"/><path d="M9 9h6M9 13h5"/></svg>`,
   tareas: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 6h12M8 12h12M8 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg>`,
 };
+
+const CATEGORIES = ["Hosting", "Dominio", "Herramientas", "Insumos", "Traslados", "Otros"];
 
 const state = {
   view: "inicio",
   clients: [],
   payments: [],
   tasks: [],
+  expenses: [],
+  cobros: [],
   filters: { nombre: "", contratoFrom: "", contratoTo: "", pagoFrom: "", pagoTo: "" },
   paymentsPeriod: currentPeriod(),
   paymentsQuery: "",
+  expensesPeriod: currentPeriod(),
+  expensesQuery: "",
   taskFilter: "pendientes",
   taskClientId: "",
   sheet: null,
@@ -106,6 +113,8 @@ function load() {
     state.clients = data.clients || [];
     state.payments = data.payments || [];
     state.tasks = data.tasks || [];
+    state.expenses = data.expenses || [];
+    state.cobros = data.cobros || [];
   } catch (error) {
     console.warn("No se pudo leer localStorage", error);
   }
@@ -116,11 +125,45 @@ function save() {
     clients: state.clients,
     payments: state.payments,
     tasks: state.tasks,
+    expenses: state.expenses,
+    cobros: state.cobros,
   }));
 }
 
 function clientById(id) {
   return state.clients.find((client) => client.id === id);
+}
+
+function isOccasional(client) {
+  return client?.modalidad === "ocasional";
+}
+
+function cobrosFor(clientId, period) {
+  return state.cobros
+    .filter((cobro) => cobro.clientId === clientId && cobro.fecha && cobro.fecha.slice(0, 7) === period)
+    .sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+}
+
+function cobrosTotal(clientId, period) {
+  return cobrosFor(clientId, period).reduce((sum, cobro) => sum + Number(cobro.monto || 0), 0);
+}
+
+function cobroById(id) {
+  return state.cobros.find((cobro) => cobro.id === id);
+}
+
+function cuotaClients(list) {
+  return list.filter((client) => !isOccasional(client));
+}
+
+function monthCollected(period) {
+  const cuotaPaid = cuotaClients(clientsForPeriod(period))
+    .filter((client) => paymentFor(client.id, period)?.status === "pagado")
+    .reduce((sum, client) => sum + Number(paymentFor(client.id, period)?.amount || client.monto || 0), 0);
+  const occasional = state.cobros
+    .filter((cobro) => cobro.fecha && cobro.fecha.slice(0, 7) === period)
+    .reduce((sum, cobro) => sum + Number(cobro.monto || 0), 0);
+  return cuotaPaid + occasional;
 }
 
 function paymentFor(clientId, period) {
@@ -130,14 +173,37 @@ function paymentFor(clientId, period) {
 function refreshLastPayment(clientId) {
   const client = clientById(clientId);
   if (!client) return;
-  const paid = state.payments
-    .filter((payment) => payment.clientId === clientId && payment.status === "pagado" && payment.paidAt)
-    .sort((a, b) => (a.paidAt < b.paidAt ? 1 : -1));
-  client.ultimoPago = paid[0]?.paidAt || "";
+  const dates = [
+    ...state.payments
+      .filter((payment) => payment.clientId === clientId && payment.status === "pagado" && payment.paidAt)
+      .map((payment) => payment.paidAt),
+    ...state.cobros
+      .filter((cobro) => cobro.clientId === clientId && cobro.fecha)
+      .map((cobro) => cobro.fecha),
+  ].sort((a, b) => (a < b ? 1 : -1));
+  client.ultimoPago = dates[0] || "";
 }
 
 function clientsForPeriod(period) {
   return state.clients.filter((client) => !client.fechaContrato || client.fechaContrato.slice(0, 7) <= period);
+}
+
+function dateField(name, value = "", extra = "") {
+  const shown = value ? formatDate(value) : "Elegí una fecha";
+  return `
+    <div class="date-wrap">
+      <span class="date-text ${value ? "" : "placeholder"}">${shown}</span>
+      <input type="date" name="${name}" value="${value || ""}" ${extra} />
+    </div>
+  `;
+}
+
+function expensesForPeriod(period) {
+  return state.expenses.filter((expense) => expense.fecha && expense.fecha.slice(0, 7) === period);
+}
+
+function expenseById(id) {
+  return state.expenses.find((expense) => expense.id === id);
 }
 
 function filteredClients() {
@@ -169,7 +235,9 @@ function monthGrid(client) {
     const payment = paymentFor(client.id, period);
     const contracted = !client.fechaContrato || client.fechaContrato.slice(0, 7) <= period;
     let kind = "";
-    if (contracted && payment?.status === "pagado") kind = "paid";
+    if (isOccasional(client)) {
+      if (contracted && cobrosTotal(client.id, period) > 0) kind = "paid";
+    } else if (contracted && payment?.status === "pagado") kind = "paid";
     else if (contracted && (payment?.status === "pendiente" || period <= currentPeriod())) kind = "due";
     cells.push({ period, label: MONTHS_SHORT[date.getMonth()], kind });
   }
@@ -181,6 +249,7 @@ function renderTopbar() {
     inicio: { eye: "Cuaderno", title: greeting() },
     clientes: { eye: "Agenda", title: "Clientes" },
     pagos: { eye: "Cobros", title: "Pagos" },
+    gastos: { eye: "Salidas", title: "Gastos" },
     tareas: { eye: "Pedidos", title: "Tareas" },
   };
   const current = titles[state.view];
@@ -195,6 +264,7 @@ function renderNav() {
     ["inicio", "Inicio"],
     ["clientes", "Clientes"],
     ["pagos", "Pagos"],
+    ["gastos", "Gastos"],
     ["tareas", "Tareas"],
   ];
   document.getElementById("nav").innerHTML = items.map(([id, label]) => `
@@ -208,12 +278,15 @@ function renderNav() {
 function renderInicio() {
   const period = currentPeriod();
   const monthClients = clientsForPeriod(period);
-  const paid = monthClients.filter((client) => paymentFor(client.id, period)?.status === "pagado");
-  const pending = monthClients.filter((client) => paymentFor(client.id, period)?.status !== "pagado");
-  const paidAmount = paid.reduce((sum, client) => sum + Number(paymentFor(client.id, period)?.amount || client.monto || 0), 0);
+  const cuota = cuotaClients(monthClients);
+  const paid = cuota.filter((client) => paymentFor(client.id, period)?.status === "pagado");
+  const pending = cuota.filter((client) => paymentFor(client.id, period)?.status !== "pagado");
+  const paidAmount = monthCollected(period);
   const pendingAmount = pending.reduce((sum, client) => sum + Number(client.monto || 0), 0);
   const openTasks = state.tasks.filter((task) => !task.completed);
-  const ratio = monthClients.length ? Math.round((paid.length / monthClients.length) * 100) : 0;
+  const monthExpenses = expensesForPeriod(period);
+  const expenseAmount = monthExpenses.reduce((sum, expense) => sum + Number(expense.monto || 0), 0);
+  const ratio = cuota.length ? Math.round((paid.length / cuota.length) * 100) : 0;
 
   const pendingRows = pending.slice(0, 4).map((client) => `
     <article class="card row" data-open-client="${client.id}">
@@ -242,17 +315,31 @@ function renderInicio() {
       <article class="stat card"><span>Aún no pagaron</span><b>${pending.length}</b></article>
       <article class="stat card"><span>Cobrado este mes</span><b>${formatMoney(paidAmount)}</b></article>
       <article class="stat card"><span>Por cobrar</span><b>${formatMoney(pendingAmount)}</b></article>
-      <article class="stat card"><span>Tareas abiertas</span><b>${openTasks.length}</b></article>
+      <article class="stat card"><span>Gastos del mes</span><b>${formatMoney(expenseAmount)}</b></article>
     </section>
     <div class="card">
-      <div class="muted">${paid.length} de ${monthClients.length} clientes pagaron ${periodLabel(period).toLowerCase()}</div>
+      <div class="muted">${paid.length} de ${cuota.length} cuotas cobradas en ${periodLabel(period).toLowerCase()}</div>
       <div class="progress"><span style="width:${ratio}%"></span></div>
+      <div class="dates" style="margin-top:10px">
+        <span>Neto ${formatMoney(paidAmount - expenseAmount)}</span>
+        <span>${monthExpenses.length} gasto${monthExpenses.length === 1 ? "" : "s"}</span>
+      </div>
     </div>
     <div class="section-head">
       <h2>Pagos pendientes</h2>
       <button class="linkish" data-nav="pagos" type="button">Ver mes</button>
     </div>
     <div class="stack">${pendingRows}</div>
+    <div class="section-head mods">
+      <h2>Gastos</h2>
+      <button class="linkish" data-nav="gastos" type="button">Ver gastos</button>
+    </div>
+    <div class="stack">${monthExpenses.slice(0, 3).map((expense) => `
+      <article class="card" data-nav="gastos">
+        <div class="ellipsis"><strong>${escapeHtml(expense.concepto)}</strong></div>
+        <div class="muted">${escapeHtml(expense.categoria || "Otros")} · ${formatDate(expense.fecha)} · ${formatMoney(expense.monto)}</div>
+      </article>
+    `).join("") || `<div class="card empty"><strong>Sin gastos</strong>Este mes todavía no registraste salidas.</div>`}</div>
     <div class="section-head mods">
       <h2>Modificaciones</h2>
       <button class="linkish" data-nav="tareas" type="button">Ver tareas</button>
@@ -273,20 +360,25 @@ function renderClientes() {
   const clients = filteredClients();
   const filtersOn = activeFiltersCount();
   const cards = clients.map((client, index) => {
+    const occasional = isOccasional(client);
     const current = paymentFor(client.id, currentPeriod());
     const paid = current?.status === "pagado";
+    const monthTotal = occasional ? cobrosTotal(client.id, currentPeriod()) : Number(client.monto || 0);
+    const pill = occasional
+      ? `<span class="status-pill ok">Ocasional</span>`
+      : `<span class="status-pill ${paid ? "ok" : "no"}">${paid ? "Pagó" : "Pendiente"}</span>`;
     return `
       <article class="card client-card" data-open-client="${client.id}" style="animation-delay:${index * 0.04}s">
         <div class="mini">${escapeHtml(initials(client.nombre))}</div>
         <div class="grow">
           <div class="ellipsis"><strong>${escapeHtml(client.nombre)}</strong></div>
-          <div class="muted ellipsis">${escapeHtml(client.sistema) || "Sin sistema"} · ${formatMoney(client.monto)}</div>
+          <div class="muted ellipsis">${escapeHtml(client.sistema) || "Sin sistema"} · ${occasional ? `Este mes ${formatMoney(monthTotal)}` : formatMoney(client.monto)}</div>
           <div class="dates">
             <span>Contrato ${formatDate(client.fechaContrato)}</span>
             <span>Último pago ${formatDate(client.ultimoPago)}</span>
           </div>
         </div>
-        <span class="status-pill ${paid ? "ok" : "no"}">${paid ? "Pagó" : "Pendiente"}</span>
+        ${pill}
       </article>
     `;
   }).join("") || `<div class="card empty"><strong>Sin clientes</strong>Agregá el primero para empezar a registrar pagos y pedidos.</div>`;
@@ -313,9 +405,34 @@ function renderPagos() {
   const clients = clientsForPeriod(period)
     .filter((client) => !query || client.nombre.toLowerCase().includes(query) || client.sistema.toLowerCase().includes(query))
     .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
-  const paidCount = clients.filter((client) => paymentFor(client.id, period)?.status === "pagado").length;
+  const cuota = cuotaClients(clients);
+  const paidCount = cuota.filter((client) => paymentFor(client.id, period)?.status === "pagado").length;
+  const collected = monthCollected(period);
 
   const rows = clients.map((client) => {
+    if (isOccasional(client)) {
+      const items = cobrosFor(client.id, period);
+      const total = cobrosTotal(client.id, period);
+      const lines = items.map((cobro) => `
+        <button class="cobro-line" data-edit-cobro="${cobro.id}" type="button">
+          <span>${formatDate(cobro.fecha)} · ${escapeHtml(cobro.concepto || "Cobro")}</span>
+          <b>${formatMoney(cobro.monto)}</b>
+        </button>
+      `).join("");
+      return `
+        <article class="card">
+          <div class="pay-row">
+            <div>
+              <div class="ellipsis"><strong>${escapeHtml(client.nombre)}</strong></div>
+              <div class="muted">${escapeHtml(client.sistema) || "Sin sistema"} · Ocasional</div>
+              <div class="dates">${items.length ? `${items.length} cobro${items.length === 1 ? "" : "s"} este mes` : "Todavía no hay cobros este mes"}</div>
+            </div>
+            <button class="btn copper" data-new-cobro="${client.id}" type="button">+ Cobro</button>
+          </div>
+          ${items.length ? `<div class="cobro-list">${lines}<div class="cobro-total">Suma del mes ${formatMoney(total)}</div></div>` : ""}
+        </article>
+      `;
+    }
     const payment = paymentFor(client.id, period);
     const paid = payment?.status === "pagado";
     return `
@@ -343,8 +460,9 @@ function renderPagos() {
     </div>
     <input class="search" data-pay-query type="search" placeholder="Filtrar clientes de este mes" value="${escapeHtml(state.paymentsQuery)}" />
     <div class="card" style="margin-top:12px">
-      ${paidCount} de ${clients.length} marcados como pagados
-      <div class="progress"><span style="width:${clients.length ? (paidCount / clients.length) * 100 : 0}%"></span></div>
+      ${cuota.length ? `${paidCount} de ${cuota.length} cuotas cobradas` : "Sin clientes de cuota fija"}
+      <div class="muted" style="margin-top:6px">Total cobrado este mes ${formatMoney(collected)}</div>
+      <div class="progress"><span style="width:${cuota.length ? (paidCount / cuota.length) * 100 : 0}%"></span></div>
     </div>
     <div class="stack" style="margin-top:12px">${rows}</div>
   `;
@@ -399,6 +517,47 @@ function renderTareas() {
   `;
 }
 
+function renderGastos() {
+  const period = state.expensesPeriod;
+  const query = state.expensesQuery.trim().toLowerCase();
+  const list = expensesForPeriod(period)
+    .filter((expense) => {
+      if (!query) return true;
+      const client = clientById(expense.clientId);
+      return `${expense.concepto} ${expense.categoria} ${client?.nombre || ""}`.toLowerCase().includes(query);
+    })
+    .sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+  const total = list.reduce((sum, expense) => sum + Number(expense.monto || 0), 0);
+
+  const rows = list.map((expense) => {
+    const client = clientById(expense.clientId);
+    return `
+      <article class="card pay-row" data-edit-expense="${expense.id}">
+        <div>
+          <div class="ellipsis"><strong>${escapeHtml(expense.concepto)}</strong></div>
+          <div class="muted">${escapeHtml(expense.categoria || "Otros")}${client ? ` · ${escapeHtml(client.nombre)}` : ""}</div>
+          <div class="dates">${formatDate(expense.fecha)}</div>
+        </div>
+        <b class="expense-amount">${formatMoney(expense.monto)}</b>
+      </article>
+    `;
+  }).join("") || `<div class="card empty"><strong>Sin gastos este mes</strong>Anotá hosting, dominios u otras salidas para ver el neto.</div>`;
+
+  document.getElementById("main").innerHTML = `
+    <div class="month-bar">
+      <button class="icon-btn ghost" data-shift-expense="-1" type="button" aria-label="Mes anterior">‹</button>
+      <h2>${periodLabel(period)}</h2>
+      <button class="icon-btn ghost" data-shift-expense="1" type="button" aria-label="Mes siguiente">›</button>
+    </div>
+    <input class="search" data-expense-query type="search" placeholder="Buscar gasto, categoría o cliente" value="${escapeHtml(state.expensesQuery)}" />
+    <div class="card" style="margin-top:12px">
+      Total del mes · ${formatMoney(total)}
+    </div>
+    <div class="stack" style="margin-top:12px">${rows}</div>
+    <button class="fab" data-new-expense type="button">+ Gasto</button>
+  `;
+}
+
 function renderSheet() {
   const root = document.getElementById("sheet");
   const sheet = state.sheet;
@@ -415,10 +574,10 @@ function renderSheet() {
         <button class="linkish" data-dismiss-sheet type="button">Cerrar</button>
       </div>
       <div class="grid-2">
-        <div class="field"><label>Contrato desde</label><input type="date" name="contratoFrom" value="${f.contratoFrom}" /></div>
-        <div class="field"><label>Contrato hasta</label><input type="date" name="contratoTo" value="${f.contratoTo}" /></div>
-        <div class="field"><label>Último pago desde</label><input type="date" name="pagoFrom" value="${f.pagoFrom}" /></div>
-        <div class="field"><label>Último pago hasta</label><input type="date" name="pagoTo" value="${f.pagoTo}" /></div>
+        <div class="field"><label>Contrato desde</label>${dateField("contratoFrom", f.contratoFrom)}</div>
+        <div class="field"><label>Contrato hasta</label>${dateField("contratoTo", f.contratoTo)}</div>
+        <div class="field"><label>Último pago desde</label>${dateField("pagoFrom", f.pagoFrom)}</div>
+        <div class="field"><label>Último pago hasta</label>${dateField("pagoTo", f.pagoTo)}</div>
       </div>
       <div class="actions">
         <button class="btn ghost" data-clear-filters type="button">Limpiar</button>
@@ -430,8 +589,9 @@ function renderSheet() {
 
   if (sheet.type === "client-form") {
     const client = sheet.id ? clientById(sheet.id) : {
-      nombre: "", sistema: "", monto: "", fechaContrato: todayISO(), notas: "",
+      nombre: "", sistema: "", monto: "", modalidad: "cuota", fechaContrato: todayISO(), notas: "",
     };
+    const occasional = isOccasional(client);
     const sistemas = [...new Set(state.clients.map((item) => item.sistema).filter(Boolean))];
     root.innerHTML = overlay(`
       <div class="sheet-head">
@@ -445,10 +605,18 @@ function renderSheet() {
           <input name="sistema" list="sistemas" value="${escapeHtml(client.sistema)}" />
           <datalist id="sistemas">${sistemas.map((item) => `<option value="${escapeHtml(item)}">`).join("")}</datalist>
         </div>
-        <div class="grid-2">
-          <div class="field"><label>Pago mensual</label><input name="monto" type="number" min="0" inputmode="decimal" value="${escapeHtml(client.monto)}" /></div>
-          <div class="field"><label>Fecha de contrato</label><input name="fechaContrato" type="date" value="${client.fechaContrato || ""}" /></div>
+        <div class="field">
+          <label>Tipo de cobro</label>
+          <select name="modalidad">
+            <option value="cuota" ${occasional ? "" : "selected"}>Cuota fija mensual</option>
+            <option value="ocasional" ${occasional ? "selected" : ""}>Cobros ocasionales</option>
+          </select>
         </div>
+        <div class="field" id="monto-field" ${occasional ? "hidden" : ""}>
+          <label>Pago mensual</label>
+          <input name="monto" type="number" min="0" inputmode="decimal" value="${escapeHtml(client.monto)}" />
+        </div>
+        <div class="field"><label>Fecha de contrato</label>${dateField("fechaContrato", client.fechaContrato || "")}</div>
         <div class="field"><label>Notas</label><textarea name="notas" placeholder="Detalles, accesos, acuerdos...">${escapeHtml(client.notas || "")}</textarea></div>
         <button class="btn copper wide" type="submit">Guardar</button>
       </form>
@@ -469,6 +637,10 @@ function renderSheet() {
     const taskList = tasks.slice(0, 6).map((task) => `
       <div class="muted">${task.completed ? "✓" : "○"} ${escapeHtml(task.titulo)} · ${formatDate(task.requestedAt)}</div>
     `).join("") || `<div class="muted">Todavía no pidió modificaciones.</div>`;
+    const clientExpenses = state.expenses.filter((expense) => expense.clientId === client.id).sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+    const expenseList = clientExpenses.slice(0, 6).map((expense) => `
+      <div class="muted">${formatDate(expense.fecha)} · ${escapeHtml(expense.concepto)} · ${formatMoney(expense.monto)}</div>
+    `).join("") || `<div class="muted">Sin gastos asociados.</div>`;
     root.innerHTML = overlay(`
       <div class="sheet-head">
         <h2>${escapeHtml(client.nombre)}</h2>
@@ -476,15 +648,24 @@ function renderSheet() {
       </div>
       <div class="detail-kv">
         <div class="kv"><span>Sistema</span><b>${escapeHtml(client.sistema) || "—"}</b></div>
-        <div class="kv"><span>Pago</span><b>${formatMoney(client.monto)}</b></div>
+        <div class="kv"><span>Pago</span><b>${isOccasional(client) ? "Ocasional" : formatMoney(client.monto)}</b></div>
         <div class="kv"><span>Contrato</span><b>${formatDate(client.fechaContrato)}</b></div>
         <div class="kv"><span>Último pago</span><b>${formatDate(client.ultimoPago)}</b></div>
       </div>
       ${client.notas ? `<div class="card"><div class="muted">Notas</div>${escapeHtml(client.notas)}</div>` : ""}
       <div class="section-head"><h2>Pagos recientes</h2></div>
+      ${isOccasional(client) ? `
+        <div class="card">
+          <div class="muted">Este mes</div>
+          <strong>${formatMoney(cobrosTotal(client.id, currentPeriod()))}</strong>
+        </div>
+      ` : ""}
       <div class="months">${months}</div>
+      ${isOccasional(client) ? `<button class="btn copper wide" data-new-cobro="${client.id}" type="button" style="margin:8px 0 4px">+ Cobro</button>` : ""}
       <div class="section-head"><h2>Solicitudes</h2></div>
       <div class="card stack stack-mods">${taskList}</div>
+      <div class="section-head"><h2>Gastos</h2></div>
+      <div class="card stack stack-mods">${expenseList}</div>
       <div class="actions">
         <button class="btn ghost" data-new-task="${client.id}" type="button">Pedir cambio</button>
         <button class="btn danger" data-delete-client="${client.id}" type="button">Eliminar</button>
@@ -515,7 +696,7 @@ function renderSheet() {
         </div>
         <div class="field"><label>Qué pidió</label><input name="titulo" required placeholder="Ej: cambiar logo, agregar módulo" /></div>
         <div class="field"><label>Detalle</label><textarea name="detalle" placeholder="Anotá lo que hay que hacer"></textarea></div>
-        <div class="field"><label>Fecha del pedido</label><input name="requestedAt" type="date" value="${todayISO()}" /></div>
+        <div class="field"><label>Fecha del pedido</label>${dateField("requestedAt", todayISO())}</div>
         <button class="btn copper wide" type="submit">Registrar</button>
       </form>
     `, "Nueva solicitud", true);
@@ -531,11 +712,79 @@ function renderSheet() {
       </div>
       <p class="muted">${escapeHtml(client?.nombre || "")} · ${periodLabel(sheet.period)}</p>
       <form data-confirm-pay>
-        <div class="field"><label>Fecha de pago</label><input name="paidAt" type="date" value="${todayISO()}" /></div>
+        <div class="field"><label>Fecha de pago</label>${dateField("paidAt", todayISO())}</div>
         <button class="btn copper wide" type="submit">Marcar como pagado</button>
       </form>
     `, "Registrar pago");
+    return;
   }
+
+  if (sheet.type === "expense-form") {
+    const expense = sheet.id ? expenseById(sheet.id) : {
+      concepto: "", monto: "", fecha: todayISO(), categoria: "Otros", clientId: "", notas: "",
+    };
+    const options = state.clients
+      .slice()
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"))
+      .map((client) => `<option value="${client.id}" ${client.id === expense.clientId ? "selected" : ""}>${escapeHtml(client.nombre)}</option>`)
+      .join("");
+    const cats = CATEGORIES.map((item) => `<option value="${item}" ${expense.categoria === item ? "selected" : ""}>${item}</option>`).join("");
+    root.innerHTML = overlay(`
+      <div class="sheet-head">
+        <h2>${sheet.id ? "Editar gasto" : "Nuevo gasto"}</h2>
+        <button class="linkish" data-dismiss-sheet type="button">Cerrar</button>
+      </div>
+      <form data-save-expense="${sheet.id || ""}">
+        <div class="field"><label>Concepto</label><input name="concepto" required placeholder="Ej: hosting, dominio, plugs" value="${escapeHtml(expense.concepto || "")}" /></div>
+        <div class="field"><label>Monto</label><input name="monto" type="number" min="0" inputmode="decimal" required value="${escapeHtml(expense.monto)}" /></div>
+        <div class="field"><label>Fecha</label>${dateField("fecha", expense.fecha || todayISO())}</div>
+        <div class="field">
+          <label>Categoría</label>
+          <select name="categoria">${cats}</select>
+        </div>
+        <div class="field">
+          <label>Cliente (opcional)</label>
+          <select name="clientId">
+            <option value="">Sin cliente</option>
+            ${options}
+          </select>
+        </div>
+        <div class="field"><label>Notas</label><textarea name="notas" placeholder="Detalle del gasto">${escapeHtml(expense.notas || "")}</textarea></div>
+        <button class="btn copper wide" type="submit">Guardar</button>
+        ${sheet.id ? `<button class="btn danger wide" data-delete-expense="${sheet.id}" type="button" style="margin-top:8px">Eliminar</button>` : ""}
+      </form>
+    `, "Formulario de gasto", true);
+    return;
+  }
+
+  if (sheet.type === "cobro-form") {
+    const cobro = sheet.id ? cobroById(sheet.id) : {
+      clientId: sheet.clientId,
+      monto: "",
+      fecha: dateInPeriod(state.paymentsPeriod),
+      concepto: "",
+    };
+    const client = clientById(cobro.clientId);
+    root.innerHTML = overlay(`
+      <div class="sheet-head">
+        <h2>${sheet.id ? "Editar cobro" : "Nuevo cobro"}</h2>
+        <button class="linkish" data-dismiss-sheet type="button">Cerrar</button>
+      </div>
+      <p class="muted">${escapeHtml(client?.nombre || "Cliente")} · se suma al total del mes</p>
+      <form data-save-cobro="${sheet.id || ""}" data-client-id="${cobro.clientId}">
+        <div class="field"><label>Monto</label><input name="monto" type="number" min="0" inputmode="decimal" required value="${escapeHtml(cobro.monto)}" /></div>
+        <div class="field"><label>Fecha</label>${dateField("fecha", cobro.fecha || todayISO())}</div>
+        <div class="field"><label>Concepto</label><input name="concepto" placeholder="Ej: ajuste, trabajo extra, instalación" value="${escapeHtml(cobro.concepto || "")}" /></div>
+        <button class="btn copper wide" type="submit">Guardar cobro</button>
+        ${sheet.id ? `<button class="btn danger wide" data-delete-cobro="${sheet.id}" type="button" style="margin-top:8px">Eliminar</button>` : ""}
+      </form>
+    `, "Registrar cobro");
+  }
+}
+
+function dateInPeriod(period) {
+  if (period === currentPeriod()) return todayISO();
+  return `${period}-01`;
 }
 
 function overlay(inner, label, full = false) {
@@ -555,6 +804,7 @@ function render() {
   if (state.view === "inicio") renderInicio();
   if (state.view === "clientes") renderClientes();
   if (state.view === "pagos") renderPagos();
+  if (state.view === "gastos") renderGastos();
   if (state.view === "tareas") renderTareas();
   renderSheet();
 }
@@ -630,6 +880,7 @@ function bindEvents() {
         state.clients = state.clients.filter((item) => item.id !== id);
         state.payments = state.payments.filter((item) => item.clientId !== id);
         state.tasks = state.tasks.filter((item) => item.clientId !== id);
+        state.cobros = state.cobros.filter((item) => item.clientId !== id);
         save();
         closeSheet();
       }
@@ -661,6 +912,58 @@ function bindEvents() {
     if (shift) {
       state.paymentsPeriod = shiftPeriod(state.paymentsPeriod, Number(shift.dataset.shiftMonth));
       render();
+      return;
+    }
+
+    const shiftExpense = event.target.closest("[data-shift-expense]");
+    if (shiftExpense) {
+      state.expensesPeriod = shiftPeriod(state.expensesPeriod, Number(shiftExpense.dataset.shiftExpense));
+      render();
+      return;
+    }
+
+    if (event.target.closest("[data-new-cobro]")) {
+      openSheet({ type: "cobro-form", clientId: event.target.closest("[data-new-cobro]").dataset.newCobro });
+      return;
+    }
+
+    const editCobro = event.target.closest("[data-edit-cobro]");
+    if (editCobro) {
+      openSheet({ type: "cobro-form", id: editCobro.dataset.editCobro });
+      return;
+    }
+
+    const deleteCobro = event.target.closest("[data-delete-cobro]");
+    if (deleteCobro) {
+      const cobro = cobroById(deleteCobro.dataset.deleteCobro);
+      if (cobro && confirm("¿Eliminar este cobro?")) {
+        const clientId = cobro.clientId;
+        state.cobros = state.cobros.filter((item) => item.id !== cobro.id);
+        refreshLastPayment(clientId);
+        save();
+        closeSheet();
+      }
+      return;
+    }
+
+    if (event.target.closest("[data-new-expense]")) {
+      openSheet({ type: "expense-form" });
+      return;
+    }
+
+    const editExpense = event.target.closest("[data-edit-expense]");
+    if (editExpense) {
+      openSheet({ type: "expense-form", id: editExpense.dataset.editExpense });
+      return;
+    }
+
+    const deleteExpense = event.target.closest("[data-delete-expense]");
+    if (deleteExpense) {
+      if (confirm("¿Eliminar este gasto?")) {
+        state.expenses = state.expenses.filter((item) => item.id !== deleteExpense.dataset.deleteExpense);
+        save();
+        closeSheet();
+      }
       return;
     }
 
@@ -707,6 +1010,8 @@ function bindEvents() {
         clients: state.clients,
         payments: state.payments,
         tasks: state.tasks,
+        expenses: state.expenses,
+        cobros: state.cobros,
         exportedAt: new Date().toISOString(),
       }, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
@@ -730,6 +1035,8 @@ function bindEvents() {
           state.clients = data.clients || [];
           state.payments = data.payments || [];
           state.tasks = data.tasks || [];
+          state.expenses = data.expenses || [];
+          state.cobros = data.cobros || [];
           save();
           render();
         } catch {
@@ -762,10 +1069,33 @@ function bindEvents() {
         input.focus();
         input.setSelectionRange(cursor, cursor);
       }
+      return;
+    }
+    if (event.target.matches("[data-expense-query]")) {
+      state.expensesQuery = event.target.value;
+      const cursor = event.target.selectionStart;
+      renderGastos();
+      const input = document.querySelector("[data-expense-query]");
+      if (input) {
+        input.focus();
+        input.setSelectionRange(cursor, cursor);
+      }
     }
   });
 
   document.body.addEventListener("change", (event) => {
+    if (event.target.matches(".date-wrap input[type='date']")) {
+      const wrap = event.target.closest(".date-wrap");
+      const text = wrap.querySelector(".date-text");
+      text.textContent = event.target.value ? formatDate(event.target.value) : "Elegí una fecha";
+      text.classList.toggle("placeholder", !event.target.value);
+      return;
+    }
+    if (event.target.matches("[name='modalidad']")) {
+      const field = document.getElementById("monto-field");
+      if (field) field.hidden = event.target.value === "ocasional";
+      return;
+    }
     if (event.target.matches("[data-task-client]")) {
       state.taskClientId = event.target.value;
       render();
@@ -783,7 +1113,8 @@ function bindEvents() {
         Object.assign(client, {
           nombre: data.nombre.trim(),
           sistema: data.sistema.trim(),
-          monto: Number(data.monto || 0),
+          modalidad: data.modalidad || "cuota",
+          monto: data.modalidad === "ocasional" ? 0 : Number(data.monto || 0),
           fechaContrato: data.fechaContrato,
           notas: data.notas.trim(),
         });
@@ -792,7 +1123,8 @@ function bindEvents() {
           id: uid(),
           nombre: data.nombre.trim(),
           sistema: data.sistema.trim(),
-          monto: Number(data.monto || 0),
+          modalidad: data.modalidad || "cuota",
+          monto: data.modalidad === "ocasional" ? 0 : Number(data.monto || 0),
           fechaContrato: data.fechaContrato,
           ultimoPago: "",
           notas: data.notas.trim(),
@@ -822,6 +1154,56 @@ function bindEvents() {
       });
       save();
       state.view = "tareas";
+      closeSheet();
+      return;
+    }
+
+    if (event.target.closest("[data-save-expense]")) {
+      event.preventDefault();
+      const form = event.target.closest("[data-save-expense]");
+      const data = Object.fromEntries(new FormData(form).entries());
+      const id = form.dataset.saveExpense;
+      const payload = {
+        concepto: data.concepto.trim(),
+        monto: Number(data.monto || 0),
+        fecha: data.fecha || todayISO(),
+        categoria: data.categoria || "Otros",
+        clientId: data.clientId || "",
+        notas: (data.notas || "").trim(),
+      };
+      if (id) {
+        Object.assign(expenseById(id), payload);
+      } else {
+        state.expenses.push({ id: uid(), ...payload });
+      }
+      save();
+      state.view = "gastos";
+      if (payload.fecha) state.expensesPeriod = payload.fecha.slice(0, 7);
+      closeSheet();
+      return;
+    }
+
+    if (event.target.closest("[data-save-cobro]")) {
+      event.preventDefault();
+      const form = event.target.closest("[data-save-cobro]");
+      const data = Object.fromEntries(new FormData(form).entries());
+      const id = form.dataset.saveCobro;
+      const clientId = form.dataset.clientId;
+      const payload = {
+        clientId,
+        monto: Number(data.monto || 0),
+        fecha: data.fecha || todayISO(),
+        concepto: (data.concepto || "").trim(),
+      };
+      if (id) {
+        Object.assign(cobroById(id), payload);
+      } else {
+        state.cobros.push({ id: uid(), ...payload });
+      }
+      refreshLastPayment(clientId);
+      save();
+      state.view = "pagos";
+      if (payload.fecha) state.paymentsPeriod = payload.fecha.slice(0, 7);
       closeSheet();
       return;
     }

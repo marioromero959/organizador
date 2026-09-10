@@ -130,9 +130,9 @@ a {
   transform: translateX(-50%);
   width: min(480px, 100%);
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
-  padding: 10px 12px calc(10px + var(--safe-bottom));
+  grid-template-columns: repeat(5, 1fr);
+  gap: 2px;
+  padding: 8px 6px calc(10px + var(--safe-bottom));
   background: var(--nav);
   color: #edf7fc;
   z-index: 6;
@@ -148,8 +148,8 @@ a {
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  padding: 8px 4px 6px;
-  border-radius: 16px;
+  padding: 6px 2px 4px;
+  border-radius: 14px;
   min-height: 52px;
   transition: background 0.2s ease, color 0.2s ease, transform 0.15s ease;
 }
@@ -169,7 +169,7 @@ a {
 }
 
 .nav span {
-  font-size: 0.68rem;
+  font-size: 0.6rem;
   font-weight: 500;
 }
 
@@ -341,10 +341,11 @@ a {
 }
 
 .search,
-.field input,
+.field input:not([type="date"]),
 .field select,
 .field textarea {
   width: 100%;
+  min-height: 48px;
   border: 1px solid var(--line);
   background: var(--cream);
   border-radius: 16px;
@@ -355,9 +356,85 @@ a {
 .search:focus,
 .field input:focus,
 .field select:focus,
-.field textarea:focus {
+.field textarea:focus,
+.date-wrap:focus-within {
   border-color: rgba(47, 159, 214, 0.5);
   box-shadow: 0 0 0 4px rgba(47, 159, 214, 0.14);
+}
+
+.date-wrap {
+  position: relative;
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--line);
+  background: var(--cream);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+}
+
+.date-text {
+  padding: 13px 14px;
+  width: 100%;
+  pointer-events: none;
+  line-height: 1.2;
+}
+
+.date-text.placeholder {
+  color: var(--ink-soft);
+}
+
+.date-wrap input[type="date"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+}
+
+.expense-amount {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--pending);
+  white-space: nowrap;
+}
+
+.cobro-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.cobro-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  background: #f4f9fd;
+  border-radius: 14px;
+  padding: 10px 12px;
+  text-align: left;
+  color: var(--ink);
+}
+
+.cobro-line b {
+  color: var(--olive);
+  white-space: nowrap;
+}
+
+.cobro-total {
+  font-weight: 600;
+  text-align: right;
+  padding: 4px 4px 0;
 }
 
 .icon-btn,
