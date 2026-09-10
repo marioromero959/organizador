@@ -1,0 +1,20 @@
+{
+  "name": "Organizador de clientes",
+  "short_name": "Clientes",
+  "description": "ABM de clientes, pagos mensuales y solicitudes de modificaciones, con persistencia local.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#1a7eb8",
+  "lang": "es-AR",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
